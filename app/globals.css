@@ -1,0 +1,60 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 270 30% 5%;
+    --foreground: 270 10% 95%;
+    --card: 270 20% 10%;
+    --card-foreground: 270 10% 95%;
+    --popover: 270 20% 8%;
+    --popover-foreground: 270 10% 95%;
+    --primary: 330 80% 60%;
+    --primary-foreground: 330 80% 10%;
+    --secondary: 280 60% 65%;
+    --secondary-foreground: 280 60% 10%;
+    --muted: 270 15% 25%;
+    --muted-foreground: 270 10% 70%;
+    --accent: 270 15% 35%;
+    --accent-foreground: 270 10% 95%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 270 20% 20%;
+    --input: 270 20% 18%;
+    --ring: 270 100% 60%;
+    --radius: 0.5rem;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+    background: linear-gradient(135deg, #0A0510 0%, #1A0C2E 100%);
+    min-height: 100vh;
+  }
+}
+
+@layer utilities {
+  .text-glow-pink {
+    text-shadow: 0 0 8px rgba(255, 20, 147, 0.7);
+  }
+  .text-glow-purple {
+    text-shadow: 0 0 8px rgba(139, 92, 246, 0.7);
+  }
+  .shadow-glow-purple {
+    box-shadow: 0 0 20px rgba(139, 92, 246, 0.5);
+  }
+  .shadow-glow-purple-sm {
+    box-shadow: 0 0 10px rgba(139, 92, 246, 0.3);
+  }
+  .shadow-glow-pink {
+    box-shadow: 0 0 20px rgba(255, 20, 147, 0.5);
+  }
+  .shadow-glow-pink-sm {
+    box-shadow: 0 0 10px rgba(255, 20, 147, 0.3);
+  }
+}
