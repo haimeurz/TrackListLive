@@ -1,6 +1,7 @@
 'use client'
 
 import React, { useState, useEffect } from 'react'
+import { io, Socket } from 'socket.io-client'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -22,16 +23,72 @@ import {
 
 export default function HomePage() {
   const [isConnected, setIsConnected] = useState(false)
+  const [socket, setSocket] = useState<Socket | null>(null)
   const [stats, setStats] = useState({
     totalSongs: 0,
     activeSessions: 0,
-    totalRefunds: 0
+    totalRefunds: 0,
+    queueLength: 0
   })
 
-  // Simulate connection status for demo
   useEffect(() => {
-    const timer = setTimeout(() => setIsConnected(true), 1000)
-    return () => clearTimeout(timer)
+    // Connect to Socket.IO server
+    const socketInstance = io('http://localhost:3002', {
+      transports: ['websocket', 'polling'],
+      timeout: 20000,
+    })
+
+    const handleConnect = () => {
+      console.log('Connected to server')
+      setIsConnected(true)
+      // Request current stats when connected
+      socketInstance.emit('getStats')
+    }
+
+    const handleDisconnect = () => {
+      console.log('Disconnected from server')
+      setIsConnected(false)
+    }
+
+    const handleStatsUpdate = (serverStats: any) => {
+      console.log('Stats update received:', serverStats)
+      setStats(prevStats => ({
+        ...prevStats,
+        activeSessions: serverStats.activeConnections || 0,
+        totalSongs: serverStats.totalSongsPlayed || 0,
+        queueLength: serverStats.queueLength || 0
+      }))
+    }
+
+    const handleQueueUpdate = (queue: any[]) => {
+      console.log('Queue update received:', queue.length, 'songs')
+      setStats(prevStats => ({
+        ...prevStats,
+        queueLength: queue.length
+      }))
+    }
+
+    const handleNewSongRequest = (song: any) => {
+      console.log('New song added:', song.title)
+      // This will trigger when a new song is added to the queue
+    }
+
+    socketInstance.on('connect', handleConnect)
+    socketInstance.on('disconnect', handleDisconnect)
+    socketInstance.on('statsUpdate', handleStatsUpdate)
+    socketInstance.on('queueUpdate', handleQueueUpdate)
+    socketInstance.on('newSongRequest', handleNewSongRequest)
+
+    setSocket(socketInstance)
+
+    return () => {
+      socketInstance.off('connect', handleConnect)
+      socketInstance.off('disconnect', handleDisconnect)
+      socketInstance.off('statsUpdate', handleStatsUpdate)
+      socketInstance.off('queueUpdate', handleQueueUpdate)
+      socketInstance.off('newSongRequest', handleNewSongRequest)
+      socketInstance.disconnect()
+    }
   }, [])
 
   return (
@@ -66,8 +123,8 @@ export default function HomePage() {
               <Volume2 className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">Ready</div>
-              <p className="text-xs text-muted-foreground">Accepting requests</p>
+              <div className="text-2xl font-bold">{stats.queueLength}</div>
+              <p className="text-xs text-muted-foreground">Songs in queue</p>
             </CardContent>
           </Card>
           
@@ -78,7 +135,7 @@ export default function HomePage() {
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold">{stats.activeSessions}</div>
-              <p className="text-xs text-muted-foreground">Connected streamers</p>
+              <p className="text-xs text-muted-foreground">Connected clients</p>
             </CardContent>
           </Card>
 
@@ -99,8 +156,8 @@ export default function HomePage() {
               <TrendingUp className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold text-green-600">99.9%</div>
-              <p className="text-xs text-muted-foreground">Uptime</p>
+              <div className="text-2xl font-bold text-green-600">{isConnected ? '100%' : '0%'}</div>
+              <p className="text-xs text-muted-foreground">Connection status</p>
             </CardContent>
           </Card>
         </div>
@@ -136,29 +193,29 @@ export default function HomePage() {
           </Card>
 
           <Card className="relative overflow-hidden">
-            <div className="absolute top-0 right-0 w-32 h-32 bg-destructive/5 rounded-full -translate-y-16 translate-x-16" />
+            <div className="absolute top-0 right-0 w-32 h-32 bg-blue/5 rounded-full -translate-y-16 translate-x-16" />
             <CardHeader>
               <div className="flex items-center gap-2">
-                <RefreshCw className="h-5 w-5 text-orange-500" />
-                <CardTitle>Smart Refund System</CardTitle>
-                <Badge variant="outline">Advanced</Badge>
+                <Settings className="h-5 w-5 text-blue-500" />
+                <CardTitle>Chat Integration</CardTitle>
+                <Badge variant="outline">Simple</Badge>
               </div>
               <CardDescription>
-                Automated refund processing with detailed tracking
+                Post YouTube links in Twitch chat to add songs to queue
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
               <div className="flex items-center gap-2 text-sm">
-                <DollarSign className="h-4 w-4 text-green-500" />
-                <span>StreamElements integration</span>
+                <Users className="h-4 w-4 text-purple-500" />
+                <span>Twitch chat monitoring</span>
+              </div>
+              <div className="flex items-center gap-2 text-sm">
+                <Music className="h-4 w-4 text-green-500" />
+                <span>Auto YouTube detection</span>
               </div>
               <div className="flex items-center gap-2 text-sm">
                 <Shield className="h-4 w-4 text-blue-500" />
-                <span>Fraud protection</span>
-              </div>
-              <div className="flex items-center gap-2 text-sm">
-                <BarChart3 className="h-4 w-4 text-purple-500" />
-                <span>Refund analytics</span>
+                <span>Blacklist filtering</span>
               </div>
             </CardContent>
           </Card>
@@ -189,7 +246,7 @@ export default function HomePage() {
             </CardHeader>
             <CardContent>
               <p className="text-sm text-muted-foreground">
-                Native Twitch chat integration with command support
+                Native Twitch chat integration with automatic link detection
               </p>
             </CardContent>
           </Card>
@@ -229,7 +286,7 @@ export default function HomePage() {
             </Button>
           </div>
           <p className="text-sm text-muted-foreground max-w-md mx-auto">
-            Configure your Twitch bot credentials and StreamElements settings to get started with song requests
+            Configure your Twitch bot credentials and start your server. Then just paste YouTube links in your Twitch chat to test!
           </p>
         </div>
       </div>

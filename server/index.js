@@ -72,8 +72,20 @@ const state = {
   history: [],
   activeSong: null,
   settings: {},
-  blacklist: [],
-  blockedUsers: []
+  blacklist: []
+}
+
+// Track active connections
+let activeConnections = 0
+
+// Function to broadcast updated stats to all clients
+function broadcastStats() {
+  const stats = {
+    activeConnections,
+    totalSongsPlayed: state.history?.length || 0,
+    queueLength: state.queue.length
+  }
+  io.emit('statsUpdate', stats)
 }
 
 // Initialize Socket.IO server
@@ -98,6 +110,37 @@ if (TWITCH_BOT_USERNAME && TWITCH_BOT_OAUTH_TOKEN && TWITCH_CHANNEL_NAME) {
     TWITCH_BOT_OAUTH_TOKEN,
     TWITCH_CHANNEL_NAME
   })
+  
+  // Add chat message listener for testing
+  if (tmiClient) {
+    tmiClient.on('message', async (channel, tags, message, self) => {
+      // Don't respond to bot's own messages
+      if (self) return
+      
+      const username = tags.username
+      const messageText = message.trim()
+      
+      // Check if message contains a YouTube URL
+      const youtubeRegex = /(?:https?:\/\/)?(?:www\.)?(?:youtube\.com\/watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/
+      const match = messageText.match(youtubeRegex)
+      
+      if (match) {
+        console.log(chalk.cyan(`[Chat] Found YouTube link from ${username}: ${messageText}`))
+        
+        // Create a simple chat request
+        const chatRequest = {
+          id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
+          youtubeUrl: match[0],
+          requester: username,
+          requestType: 'chat',
+          timestamp: new Date().toISOString()
+        }
+        
+        // Process the request
+        await validateAndAddSong(chatRequest, true) // bypass restrictions for testing
+      }
+    })
+  }
 } else {
   console.warn(chalk.yellow('Twitch bot credentials missing. Chat features disabled.'))
 }
@@ -119,14 +162,37 @@ function requireAdmin(handler) {
 
 // Socket.IO connection handling
 io.on('connection', (socket) => {
-  console.log(chalk.green(`[Socket.IO] Client connected: ${socket.id}`))
+  activeConnections++
+  console.log(chalk.green(`[Socket.IO] Client connected: ${socket.id} (${activeConnections} active)`))
 
   // Send initial state
   socket.emit('queueUpdate', state.queue)
   socket.emit('activeSongUpdate', state.activeSong)
   socket.emit('settingsUpdate', state.settings)
   socket.emit('blacklistUpdate', state.blacklist)
-  socket.emit('blockedUsersUpdate', state.blockedUsers)
+  
+  // Broadcast updated stats to all clients
+  broadcastStats()
+
+  // Handle stats request
+  socket.on('getStats', () => {
+    try {
+      const stats = db.fetchAllTimeStats()
+      socket.emit('statsUpdate', {
+        activeConnections,
+        totalSongsPlayed: stats?.totalSongsPlayed || state.history.length,
+        queueLength: state.queue.length,
+        ...stats
+      })
+    } catch (error) {
+      console.error(chalk.red('[Statistics] Error fetching stats:'), error)
+      socket.emit('statsUpdate', {
+        activeConnections,
+        totalSongsPlayed: state.history.length,
+        queueLength: state.queue.length
+      })
+    }
+  })
 
   // Admin authentication
   socket.on('adminAuth', (credentials) => {
@@ -254,117 +320,14 @@ io.on('connection', (socket) => {
     }
   })
 
-  // Admin: Refund song request from queue
-  socket.on('adminRefundQueueSong', requireAdmin((data) => {
-    const { requestId, reason = 'Refunded by admin' } = data
-    
-    try {
-      // Find the song in the queue
-      const songIndex = state.queue.findIndex(song => song.id === requestId)
-      
-      if (songIndex !== -1) {
-        const song = state.queue[songIndex]
-        
-        // Mark as refunded in database
-        const success = db.refundQueueItem(requestId, reason)
-        
-        if (success) {
-          // Remove from queue
-          state.queue.splice(songIndex, 1)
-          
-          // Send Twitch chat notification if possible
-          if (sendChatMessage && song.requesterLogin) {
-            const donationText = song.donationInfo 
-              ? ` (${song.donationInfo.amount} ${song.donationInfo.currency} donation)`
-              : ''
-            sendChatMessage(`@${song.requesterLogin}, your song request "${song.title}" has been refunded${donationText}. Reason: ${reason}`)
-          }
-          
-          io.emit('queueUpdate', state.queue)
-          socket.emit('refundSuccess', { 
-            message: `Successfully refunded "${song.title}" by ${song.requester}`,
-            refundedSong: { ...song, refunded: true, refundReason: reason }
-          })
-          
-          console.log(chalk.magenta(`[Admin] Refunded queue song "${song.title}" by ${song.requester}. Reason: ${reason}`))
-        } else {
-          socket.emit('refundError', { message: 'Failed to refund song in database' })
-        }
-      } else {
-        socket.emit('refundError', { message: 'Song not found in queue' })
-      }
-    } catch (error) {
-      console.error(chalk.red('[Admin] Error refunding queue song:'), error)
-      socket.emit('refundError', { message: 'Internal error during refund' })
-    }
-  }))
-
-  // Admin: Refund song request from history
-  socket.on('adminRefundHistorySong', requireAdmin((data) => {
-    const { historyId, reason = 'Refunded by admin' } = data
-    
-    try {
-      // Find the song in history
-      const song = state.history.find(song => song.id === historyId)
-      
-      if (song) {
-        // Mark as refunded in database
-        const success = db.refundHistoryItem(historyId, reason)
-        
-        if (success) {
-          // Update the song in history state
-          const songIndex = state.history.findIndex(s => s.id === historyId)
-          if (songIndex !== -1) {
-            state.history[songIndex] = { 
-              ...state.history[songIndex], 
-              refunded: true, 
-              refundReason: reason,
-              refundedAt: new Date().toISOString()
-            }
-          }
-          
-          // Send Twitch chat notification if possible
-          if (sendChatMessage && song.requesterLogin) {
-            const donationText = song.donationInfo 
-              ? ` (${song.donationInfo.amount} ${song.donationInfo.currency} donation)`
-              : ''
-            sendChatMessage(`@${song.requesterLogin}, your song request "${song.title}" has been refunded${donationText}. Reason: ${reason}`)
-          }
-          
-          io.emit('historyUpdate', state.history.slice(0, 20))
-          socket.emit('refundSuccess', { 
-            message: `Successfully refunded "${song.title}" by ${song.requester}`,
-            refundedSong: { ...song, refunded: true, refundReason: reason }
-          })
-          
-          console.log(chalk.magenta(`[Admin] Refunded history song "${song.title}" by ${song.requester}. Reason: ${reason}`))
-        } else {
-          socket.emit('refundError', { message: 'Failed to refund song in database' })
-        }
-      } else {
-        socket.emit('refundError', { message: 'Song not found in history' })
-      }
-    } catch (error) {
-      console.error(chalk.red('[Admin] Error refunding history song:'), error)
-      socket.emit('refundError', { message: 'Internal error during refund' })
-    }
-  }))
-
-  // Admin: Get refunded requests
-  socket.on('getRefundedRequests', requireAdmin(() => {
-    try {
-      const refundedRequests = db.getRefundedRequests()
-      socket.emit('refundedRequestsUpdate', refundedRequests)
-    } catch (error) {
-      console.error(chalk.red('[Admin] Error fetching refunded requests:'), error)
-      socket.emit('refundedRequestsError', { message: 'Failed to fetch refunded requests' })
-    }
-  }))
-
   // Handle disconnect
   socket.on('disconnect', () => {
-    console.log(chalk.yellow(`[Socket.IO] Client disconnected: ${socket.id}`))
+    activeConnections--
+    console.log(chalk.yellow(`[Socket.IO] Client disconnected: ${socket.id} (${activeConnections} active)`))
     authenticatedAdminSockets.delete(socket.id)
+    
+    // Broadcast updated stats
+    broadcastStats()
   })
 })
 
@@ -374,15 +337,6 @@ async function validateAndAddSong(request, bypassRestrictions = false) {
   const userName = requester
 
   console.log(chalk.blue(`[Queue] Processing request from ${userName}: ${youtubeUrl}`))
-
-  // Check if requester is blocked
-  if (!bypassRestrictions && state.blockedUsers.some(user => user.username.toLowerCase() === userName.toLowerCase())) {
-    console.log(chalk.yellow(`[Queue] User ${userName} is blocked - rejecting request`))
-    if (sendChatMessage) {
-      sendChatMessage(`@${userName}, you are currently blocked from making song requests.`)
-    }
-    return
-  }
 
   // Check user queue limit for channel points
   if (!bypassRestrictions && requestType === 'channelPoint') {
@@ -483,6 +437,9 @@ async function validateAndAddSong(request, bypassRestrictions = false) {
   // Emit updates
   io.emit('newSongRequest', finalSongRequest)
   io.emit('queueUpdate', state.queue)
+  
+  // Broadcast updated stats
+  broadcastStats()
 
   const requestSource = requestType === 'donation' ? `donation (${request.donationInfo?.amount} ${request.donationInfo?.currency})` : requestType
   console.log(chalk.green(`[Queue] Added song "${finalSongRequest.title}" by ${finalSongRequest.artist}. Type: ${requestType}. Requester: ${userName}. Position: #${queuePosition}. Source: ${requestSource}`))
@@ -555,10 +512,6 @@ async function loadInitialData() {
     // Load blacklist
     state.blacklist = db.loadBlacklist()
     console.log(chalk.blue(`[Database] Loaded ${state.blacklist.length} blacklist items`))
-    
-    // Load blocked users
-    state.blockedUsers = db.loadBlockedUsers()
-    console.log(chalk.blue(`[Database] Loaded ${state.blockedUsers.length} blocked users`))
     
     console.log(chalk.green('[Database] Initial data loaded successfully'))
   } catch (error) {
